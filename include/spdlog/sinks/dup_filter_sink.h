@@ -53,6 +53,16 @@ protected:
     size_t skip_counter_ = 0;
     level::level_enum log_level_;
 
+    void log_skip_msg(const source_loc& source, const string_view_t& logger_name) {
+        char buf[64];
+        auto msg_size = ::snprintf(buf, sizeof(buf), "Skipped %u duplicate messages..", static_cast<unsigned>(skip_counter_));
+        if (msg_size > 0 && static_cast<size_t>(msg_size) < sizeof(buf))
+        {
+            details::log_msg skipped_msg{source, logger_name, log_level_, string_view_t{buf, static_cast<size_t>(msg_size)}};
+            dist_sink<Mutex>::sink_it_(skipped_msg);
+        }
+    }
+
     void sink_it_(const details::log_msg &msg) override
     {
         bool filtered = filter_(msg);
@@ -65,13 +75,7 @@ protected:
         // log the "skipped.." message
         if (skip_counter_ > 0)
         {
-            char buf[64];
-            auto msg_size = ::snprintf(buf, sizeof(buf), "Skipped %u duplicate messages..", static_cast<unsigned>(skip_counter_));
-            if (msg_size > 0 && static_cast<size_t>(msg_size) < sizeof(buf))
-            {
-                details::log_msg skipped_msg{msg.source, msg.logger_name, log_level_, string_view_t{buf, static_cast<size_t>(msg_size)}};
-                dist_sink<Mutex>::sink_it_(skipped_msg);
-            }
+            log_skip_msg(msg.source, msg.logger_name);
         }
 
         // log current message
@@ -86,6 +90,18 @@ protected:
     {
         auto filter_duration = msg.time - last_msg_time_;
         return (filter_duration > max_skip_duration_) || (msg.payload != last_msg_payload_);
+    }
+
+    void flush_() override {
+        if (skip_counter_ > 0) {
+            //TODO last_logger_name_
+            //TODO source
+            log_skip_msg(msg.source, msg.logger_name);
+            skip_counter_ = 0;
+            last_msg_time_ = {};
+            last_msg_payload_.clear();
+        }
+        spdlog::sinks::dist_sink<Mutex>::flush_();
     }
 };
 
